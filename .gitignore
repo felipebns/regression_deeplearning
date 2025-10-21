@@ -1,0 +1,7 @@
+__pycache__*
+.env
+.venv
+env/
+venv/
+SP_MEMBERS.parquet
+SP_MEMBERS.xlsx
