@@ -5,3 +5,4 @@ env/
 venv/
 SP_MEMBERS.parquet
 SP_MEMBERS.xlsx
+SP_MEMBERS.csv
