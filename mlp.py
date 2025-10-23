@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
+
+
 class mlp:
     def __init__(self, n_features:int, n_hidden_layers: int, n_neurons_per_layer: list, 
                 activation: str, loss: str, optimizer: str, epochs: int, eta: float) -> None:
