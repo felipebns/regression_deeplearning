@@ -1,9 +1,7 @@
-from sklearn.metrics import confusion_matrix, roc_curve, auc
+from sklearn.metrics import confusion_matrix, roc_curve, auc, mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-
-
 
 class mlp:
     def __init__(self, n_features:int, n_hidden_layers: int, n_neurons_per_layer: list, 
@@ -28,7 +26,8 @@ class mlp:
             self.biases.append(b)
 
         # histórico de treino
-        self.history = {"loss": [], "accuracy": []}
+        self.metric_name = "Accuracy" if loss == "cross_entropy" else "RMSE"
+        self.history = {"loss": [], "metric": [], "val_loss": [], "val_metric": []}
 
         print("\n=== Inicialização de Pesos e Biases ===")
         for i, (w, b) in enumerate(zip(self.weights, self.biases)):
@@ -36,7 +35,7 @@ class mlp:
             print(f"W{i+1} shape {w.shape}:\n{w}")
             print(f"b{i+1} shape {b.shape}:\n{b}\n")
 
-    def train(self, X, y, threshold: float = 5e-3, window: int = 10) -> None:
+    def train(self, X, y, threshold: float = 5e-3, window: int = 10, X_val=None, y_val=None) -> None:
         loss_history = []
 
         for epoch in range(self.epochs):
@@ -52,15 +51,52 @@ class mlp:
             loss_history.append(avg_loss)
 
             preds_train = self.test(X)
-            train_acc = self.calculate_accuracy(y, preds_train)
+            if self.loss == "cross_entropy":
+                train_metric = self.calculate_accuracy(y, preds_train)
+            else:
+                train_metric = self.calculate_rmse(y, preds_train)
 
             # armazenar no histórico
             self.history["loss"].append(avg_loss)
-            self.history["accuracy"].append(train_acc)
+            self.history["metric"].append(train_metric)
+
+            has_val = X_val is not None and y_val is not None
+            if has_val:
+                val_losses = []
+                val_preds = []
+                for j in range(len(y_val)):
+                    y_pred_val, _ = self.forward_pass(X_val[j])
+                    val_losses.append(self.loss_calculation(y_val[j], y_pred_val))
+                    if self.loss == "cross_entropy":
+                        val_preds.append(np.argmax(y_pred_val))
+                    else:
+                        val_arr = np.array(y_pred_val).ravel()
+                        val_preds.append(val_arr[0] if val_arr.size > 0 else val_arr)
+                val_loss = float(np.mean(val_losses)) if val_losses else np.nan
+                if self.loss == "cross_entropy":
+                    val_metric = self.calculate_accuracy(y_val, np.array(val_preds))
+                else:
+                    val_metric = self.calculate_rmse(y_val, np.array(val_preds))
+
+                self.history["val_loss"].append(val_loss)
+                self.history["val_metric"].append(val_metric)
+            else:
+                self.history["val_loss"].append(None)
+                self.history["val_metric"].append(None)
 
             if epoch % 10 == 0:
-                acc_str = f"{train_acc*100:.2f}%" if not np.isnan(train_acc) else "nan"
-                print(f"Epoch {epoch}, Loss: {avg_loss:.6f}, Train Acc: {acc_str}")
+                if self.loss == "cross_entropy":
+                    metric_str = f"{train_metric*100:.2f}%" if not np.isnan(train_metric) else "nan"
+                else:
+                    metric_str = f"{train_metric:.6f}"
+                message = f"Epoch {epoch}, Loss: {avg_loss:.6f}, Train {self.metric_name}: {metric_str}"
+                if has_val:
+                    if self.loss == "cross_entropy":
+                        val_metric_str = f"{val_metric*100:.2f}%" if not np.isnan(val_metric) else "nan"
+                    else:
+                        val_metric_str = f"{val_metric:.6f}" if val_metric is not None else "nan"
+                    message += f", Val Loss: {val_loss:.6f}, Val {self.metric_name}: {val_metric_str}"
+                print(message)
 
             # critério de parada: média móvel dos últimos "window" epochs
             if epoch >= window:
@@ -72,20 +108,31 @@ class mlp:
 
     def test(self, X: np.ndarray) -> np.ndarray:
         preds = []
-        for i in range(len(X)): 
+        for i in range(len(X)):
             y_pred, _ = self.forward_pass(X[i])
             if self.loss == "cross_entropy":
                 preds.append(np.argmax(y_pred))
             else:
                 val = np.array(y_pred).ravel()
-                v = val[0] if val.size > 0 else val
-                preds.append(1 if v > 0.5 else 0)
+                preds.append(val[0] if val.size > 0 else val)
         return np.array(preds)
 
 
     def evaluate(self, X: np.ndarray, y: np.ndarray, plot_confusion: bool, plot_roc: bool, preds: np.ndarray) -> None:
-        acc = self.calculate_accuracy(y, preds)
-        print(f"Accuracy: {acc*100:.2f}%")
+        if self.loss == "cross_entropy":
+            acc = self.calculate_accuracy(y, preds)
+            print(f"Accuracy: {acc*100:.2f}%")
+        else:
+            y_true = np.asarray(y).ravel()
+            preds = np.asarray(preds).ravel()
+            mse = mean_squared_error(y_true, preds)
+            rmse = np.sqrt(mse)
+            mae = mean_absolute_error(y_true, preds)
+            r2 = r2_score(y_true, preds)
+            print(f"MSE: {mse:.6f}")
+            print(f"RMSE: {rmse:.6f}")
+            print(f"MAE: {mae:.6f}")
+            print(f"R2: {r2:.6f}")
 
         print("\n=== Pesos e Biases do Modelo ===")
         for i, (w, b) in enumerate(zip(self.weights, self.biases)):
@@ -97,11 +144,15 @@ class mlp:
 
         binary = (len(np.unique(y)) == 2)
 
-        if plot_confusion:
+        if plot_confusion and self.loss == "cross_entropy":
             self.plot_confusion_matrix(y, preds)
+        elif plot_confusion:
+            print("Confusion matrix não é aplicável para regressão.")
 
-        if plot_roc and binary:
+        if plot_roc and binary and self.loss == "cross_entropy":
             self.plot_roc_curve(X, y)
+        elif plot_roc and self.loss != "cross_entropy":
+            print("ROC curve não é aplicável para regressão.")
 
         # sempre plota histórico se existir
         if self.history and len(self.history.get("loss", [])) > 0:
@@ -148,7 +199,9 @@ class mlp:
     def plot_history(self):
         """Plota loss e accuracy armazenados em self.history."""
         loss = self.history.get("loss", [])
-        acc = self.history.get("accuracy", [])
+        metric = self.history.get("metric", [])
+        val_loss = self.history.get("val_loss", [])
+        val_metric = self.history.get("val_metric", [])
         epochs = np.arange(1, len(loss)+1)
 
         fig, axes = plt.subplots(1, 2, figsize=(12,4))
@@ -158,18 +211,29 @@ class mlp:
         axes[0].set_xlabel("Epoch")
         axes[0].set_ylabel("Loss")
         axes[0].grid(True, linestyle="--", alpha=0.4)
+        if val_loss and any(v is not None for v in val_loss):
+            axes[0].plot(epochs, val_loss, marker="s", linestyle="--", label="Val Loss")
+            axes[0].legend()
         # accuracy
-        axes[1].plot(epochs, acc, marker="o")
-        axes[1].set_title("Accuracy por Epoch (treino)")
+        axes[1].plot(epochs, metric, marker="o")
+        axes[1].set_title(f"{self.metric_name} por Epoch (treino)")
         axes[1].set_xlabel("Epoch")
-        axes[1].set_ylabel("Accuracy")
+        axes[1].set_ylabel(self.metric_name)
         axes[1].grid(True, linestyle="--", alpha=0.4)
+        if val_metric and any(v is not None for v in val_metric):
+            axes[1].plot(epochs, val_metric, marker="s", linestyle="--", label=f"Val {self.metric_name}")
+            axes[1].legend()
 
         plt.tight_layout()
         plt.show()
 
     def calculate_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         return np.mean(y_true == y_pred)
+
+    def calculate_rmse(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        y_true = np.asarray(y_true).ravel()
+        y_pred = np.asarray(y_pred).ravel()
+        return np.sqrt(np.mean((y_true - y_pred)**2))
 
     def forward_pass(self, x: np.ndarray) -> tuple:
         a = x
